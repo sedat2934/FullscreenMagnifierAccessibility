@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Fullscreen Magnifier</string>
+    <string name="service_description">Navigasyon çubuğundaki erişilebilirlik düğmesiyle Android sisteminin tam ekran büyütmesini açıp kapatır.</string>
+</resources>
