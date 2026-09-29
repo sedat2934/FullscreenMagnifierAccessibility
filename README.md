@@ -1,19 +1,16 @@
-# Fullscreen Magnifier Accessibility Service
+# Fullscreen Magnifier Accessibility Service v2
 
-Android 13+ için minimal AccessibilityService.
+Eski tip tam ekran büyütme davranışını taklit eder:
 
-- Navigasyon çubuğundaki Accessibility button callback'ini kullanır.
-- Android'in kendi MagnificationController API'si ile `MAGNIFICATION_MODE_FULLSCREEN` açar.
-- Tekrar basıldığında `reset(true)` ile büyütmeyi kapatır.
-- Varsayılan büyütme: 3.0x.
-- Root / LSPosed gerekmez.
+1. Erişilebilirlik düğmesine basın.
+2. Servis ilk ekran dokunuşunu en fazla 8 saniye bekler.
+3. Dokunduğunuz noktayı merkez alarak Android'in kendi tam ekran büyütmesini 3x açar.
+4. Büyütme açıkken erişilebilirlik düğmesine tekrar basarsanız büyütme kapanır.
 
-## Kurulum sonrası
-1. Ayarlar > Erişilebilirlik > Fullscreen Magnifier bölümünden hizmeti etkinleştirin.
-2. Kısayol olarak "Erişilebilirlik düğmesi"ni seçin.
-3. Navigasyon çubuğundaki erişilebilirlik düğmesine basın.
+İlk dokunuş yalnızca büyütmeyi başlatmak için tüketilir. Sonraki dokunmalar normal çalışır.
 
-## Log kontrolü
-`adb logcat | grep FSMagService`
-veya rootlu cihazda:
-`su -c 'logcat -d | grep FSMagService'`
+Log kontrolü:
+
+```sh
+su -c 'logcat -d | grep FSMagService'
+```
