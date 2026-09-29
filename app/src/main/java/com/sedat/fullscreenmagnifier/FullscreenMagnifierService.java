@@ -21,6 +21,8 @@ public class FullscreenMagnifierService extends AccessibilityService {
     private static final long ARM_TIMEOUT_MS = 8000L;
     private static final float PAN_SLOP_DP = 3.0f;
     private static final float NAV_RELAY_MIN_DP = 72.0f;
+    private static final float MIN_SCALE = 1.5f;
+    private static final float MAX_SCALE = 8.0f;
 
     private AccessibilityButtonController.AccessibilityButtonCallback buttonCallback;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -34,6 +36,14 @@ public class FullscreenMagnifierService extends AccessibilityService {
     private float downX;
     private float downY;
     private boolean dragging = false;
+
+    private boolean pinchActive = false;
+    private float pinchStartSpan = 0f;
+    private float pinchStartScale = DEFAULT_SCALE;
+    private float pinchStartCenterX = 0f;
+    private float pinchStartCenterY = 0f;
+    private float pinchStartFocusX = 0f;
+    private float pinchStartFocusY = 0f;
 
     private final Runnable armTimeout = () -> {
         if (waitingForTap && !magnified) {
@@ -61,7 +71,7 @@ public class FullscreenMagnifierService extends AccessibilityService {
             }
         };
         controller.registerAccessibilityButtonCallback(buttonCallback);
-        Log.i(TAG, "v3 connected; accessibility button -> first tap -> fullscreen magnification; one-finger drag pans");
+        Log.i(TAG, "v4 connected; first tap magnifies; one-finger drag pans; two-finger pinch zooms");
     }
 
     private void handleAccessibilityButton() {
@@ -100,9 +110,10 @@ public class FullscreenMagnifierService extends AccessibilityService {
         waitingForTap = false;
         magnified = true;
         dragging = false;
+        pinchActive = false;
         mainHandler.removeCallbacks(armTimeout);
         enableTouchCapture();
-        Log.i(TAG, "One-finger panning capture ENABLED");
+        Log.i(TAG, "Panning + pinch capture ENABLED");
     }
 
     private void enableTouchCapture() {
@@ -122,6 +133,7 @@ public class FullscreenMagnifierService extends AccessibilityService {
     private void disableTouchCapture() {
         waitingForTap = false;
         dragging = false;
+        pinchActive = false;
         mainHandler.removeCallbacks(armTimeout);
         try {
             AccessibilityServiceInfo info = getServiceInfo();
@@ -155,43 +167,157 @@ public class FullscreenMagnifierService extends AccessibilityService {
 
         if (!magnified) return;
 
-        // Keep the navigation area usable. The original touch is consumed, then
-        // replayed after capture is temporarily released so Home/Back/a11y button
-        // can still be pressed while magnified.
-        if (action == MotionEvent.ACTION_DOWN && isInNavigationRelayArea(y)) {
+        // Keep the navigation area usable. Only a single-finger DOWN is relayed.
+        if (action == MotionEvent.ACTION_DOWN && event.getPointerCount() == 1
+                && isInNavigationRelayArea(y)) {
             relayNavigationTap(x, y);
             return;
         }
 
         switch (action) {
             case MotionEvent.ACTION_DOWN:
+                pinchActive = false;
                 downX = lastX = x;
                 downY = lastY = y;
                 dragging = false;
                 break;
 
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (event.getPointerCount() >= 2) {
+                    beginPinch(event);
+                }
+                break;
+
             case MotionEvent.ACTION_MOVE:
-                float dx = x - lastX;
-                float dy = y - lastY;
-                if (!dragging) {
-                    float slop = dp(PAN_SLOP_DP);
-                    dragging = Math.hypot(x - downX, y - downY) >= slop;
+                if (pinchActive && event.getPointerCount() >= 2) {
+                    updatePinchZoom(event);
+                } else if (event.getPointerCount() == 1) {
+                    float oneX = event.getX(0);
+                    float oneY = event.getY(0);
+                    float dx = oneX - lastX;
+                    float dy = oneY - lastY;
+                    if (!dragging) {
+                        float slop = dp(PAN_SLOP_DP);
+                        dragging = Math.hypot(oneX - downX, oneY - downY) >= slop;
+                    }
+                    if (dragging) {
+                        panByFingerDelta(dx, dy);
+                    }
+                    lastX = oneX;
+                    lastY = oneY;
                 }
-                if (dragging) {
-                    panByFingerDelta(dx, dy);
+                break;
+
+            case MotionEvent.ACTION_POINTER_UP:
+                if (pinchActive && event.getPointerCount() == 2) {
+                    pinchActive = false;
+                    dragging = false;
+
+                    // ACTION_POINTER_UP still contains the pointer that is leaving.
+                    // Seed one-finger panning with the remaining pointer to avoid a jump.
+                    int leaving = event.getActionIndex();
+                    int remaining = leaving == 0 ? 1 : 0;
+                    if (remaining < event.getPointerCount()) {
+                        downX = lastX = event.getX(remaining);
+                        downY = lastY = event.getY(remaining);
+                    }
+                    Log.i(TAG, "Pinch finished");
                 }
-                lastX = x;
-                lastY = y;
                 break;
 
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 dragging = false;
+                pinchActive = false;
                 break;
         }
-        // Intentionally do not delegate any app-area touch while magnified.
-        // Because SOURCE_TOUCHSCREEN is captured, the underlying app does not
-        // receive these one-finger gestures.
+
+        // Touchscreen events are intentionally captured while magnified. Therefore
+        // one-finger panning and two-finger pinch gestures are not delivered to the
+        // app underneath the magnifier.
+    }
+
+    private void beginPinch(MotionEvent event) {
+        if (event.getPointerCount() < 2) return;
+        try {
+            MagnificationConfig current = getMagnificationController().getMagnificationConfig();
+            if (current == null || !current.isActivated() || current.getScale() <= 1.0f) return;
+
+            pinchStartSpan = pointerSpan(event);
+            if (pinchStartSpan <= 0f) return;
+
+            pinchStartScale = current.getScale();
+            pinchStartCenterX = current.getCenterX();
+            pinchStartCenterY = current.getCenterY();
+            pinchStartFocusX = pointerFocusX(event);
+            pinchStartFocusY = pointerFocusY(event);
+            pinchActive = true;
+            dragging = false;
+            Log.i(TAG, "Pinch started scale=" + pinchStartScale
+                    + " focus=" + pinchStartFocusX + "," + pinchStartFocusY);
+        } catch (Throwable t) {
+            pinchActive = false;
+            Log.e(TAG, "Could not start pinch", t);
+        }
+    }
+
+    private void updatePinchZoom(MotionEvent event) {
+        if (event.getPointerCount() < 2 || pinchStartSpan <= 0f) return;
+        try {
+            float span = pointerSpan(event);
+            if (span <= 0f) return;
+
+            float requestedScale = pinchStartScale * (span / pinchStartSpan);
+            float newScale = clamp(requestedScale, MIN_SCALE, MAX_SCALE);
+
+            DisplayMetrics dm = getResources().getDisplayMetrics();
+            float displayCenterX = dm.widthPixels / 2.0f;
+            float displayCenterY = dm.heightPixels / 2.0f;
+
+            // Keep the content that was under the pinch midpoint approximately under
+            // that midpoint while scale changes. This makes pinch feel like a normal
+            // photo/map zoom instead of zooming only around the display center.
+            float newCenterX = pinchStartCenterX
+                    + (pinchStartFocusX - displayCenterX)
+                    * ((1.0f / pinchStartScale) - (1.0f / newScale));
+            float newCenterY = pinchStartCenterY
+                    + (pinchStartFocusY - displayCenterY)
+                    * ((1.0f / pinchStartScale) - (1.0f / newScale));
+
+            float halfViewportW = dm.widthPixels / (2.0f * newScale);
+            float halfViewportH = dm.heightPixels / (2.0f * newScale);
+            newCenterX = clamp(newCenterX, halfViewportW, dm.widthPixels - halfViewportW);
+            newCenterY = clamp(newCenterY, halfViewportH, dm.heightPixels - halfViewportH);
+
+            MagnificationConfig next = new MagnificationConfig.Builder()
+                    .setMode(MagnificationConfig.MAGNIFICATION_MODE_FULLSCREEN)
+                    .setActivated(true)
+                    .setScale(newScale)
+                    .setCenterX(newCenterX)
+                    .setCenterY(newCenterY)
+                    .build();
+
+            boolean ok = getMagnificationController().setMagnificationConfig(next, false);
+            if (!ok) {
+                Log.w(TAG, "Pinch zoom update rejected scale=" + newScale);
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Pinch zoom failed", t);
+        }
+    }
+
+    private static float pointerSpan(MotionEvent event) {
+        float dx = event.getX(1) - event.getX(0);
+        float dy = event.getY(1) - event.getY(0);
+        return (float) Math.hypot(dx, dy);
+    }
+
+    private static float pointerFocusX(MotionEvent event) {
+        return (event.getX(0) + event.getX(1)) / 2.0f;
+    }
+
+    private static float pointerFocusY(MotionEvent event) {
+        return (event.getY(0) + event.getY(1)) / 2.0f;
     }
 
     private void enableFullscreenMagnification(float centerX, float centerY) {
