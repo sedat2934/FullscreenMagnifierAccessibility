@@ -1,16 +1,25 @@
-# Fullscreen Magnifier Accessibility Service v2
+# Fullscreen Magnifier Accessibility v3
 
-Eski tip tam ekran büyütme davranışını taklit eder:
+Android 16 için AccessibilityService tabanlı tam ekran büyütme yardımcı uygulaması.
 
-1. Erişilebilirlik düğmesine basın.
-2. Servis ilk ekran dokunuşunu en fazla 8 saniye bekler.
-3. Dokunduğunuz noktayı merkez alarak Android'in kendi tam ekran büyütmesini 3x açar.
-4. Büyütme açıkken erişilebilirlik düğmesine tekrar basarsanız büyütme kapanır.
+## v3 davranışı
 
-İlk dokunuş yalnızca büyütmeyi başlatmak için tüketilir. Sonraki dokunmalar normal çalışır.
+- Erişilebilirlik düğmesine basılır.
+- İlk ekran dokunuşu büyütmenin merkezi olur ve sistemin FULLSCREEN magnification modu 3x açılır.
+- Büyütme açıkken **tek parmak sürükleme yalnızca büyütülmüş görüntüyü taşır (pan)**.
+- Uygulama alanındaki tek parmak dokunma/sürüklemeleri alttaki uygulamaya iletilmez.
+- Alt navigasyon bölgesine dokunuşlar geçici olarak serbest bırakılıp yeniden gönderilir; böylece navigasyon düğmeleri ve erişilebilirlik düğmesi kullanılabilir kalır.
+- Erişilebilirlik düğmesine tekrar basıldığında büyütme kapanır.
 
-Log kontrolü:
+## Log
 
 ```sh
 su -c 'logcat -d | grep FSMagService'
 ```
+
+Beklenen bazı kayıtlar:
+
+- `ARMED: waiting for first touchscreen tap`
+- `Fullscreen magnification ON`
+- `One-finger panning capture ENABLED`
+- `Relaying navigation-area tap`

@@ -4,6 +4,7 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRequestAccessibilityButton"
     android:canControlMagnification="true"
+    android:canPerformGestures="true"
     android:canRetrieveWindowContent="false"
     android:description="@string/service_description"
     android:notificationTimeout="0" />
